@@ -32,7 +32,9 @@
 <div id="start">
   <h1>飛び出す<br>お薬手帳 AR</h1>
   <p>お薬手帳に貼った<b>マーク(1〜7)</b>を<br>カメラで写すと、場面が飛び出します。<br><br>
-  「はじめる」を押したあと、<br>カメラの使用を「許可」してください。</p>
+  「はじめる」を押したあと、<br>カメラと「動きと方向」の使用を<br>「許可」してください。</p>
+  <div style="font-size:17px;color:#17413f;font-weight:700;margin-bottom:8px;">貼ったマークの大きさ</div>
+  <div id="sizeBtns" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:22px;"></div>
   <button class="main" id="startBtn">はじめる</button>
   <a href="./vr.html">マークがないときは こちら(VR版)</a>
 </div>
@@ -271,15 +273,32 @@ function spawnPills(g) {
 // ===== AR(マークを読み取って飛び出す) =====
 const SCALE = 0.6; // 画面に残すときの大きさ(マークの大きさに対して)
 // ===== お薬手帳の大きさ(ここを変えると、別の手帳にも合わせられます) =====
-const MARK_CM = 4.5;   // シールのマークの大きさ(cm)
+let MARK_CM = 4.5;     // シールのマークの大きさ(cm)。はじめの画面で選べます
 const BOOK_W = 20;     // 手帳をひろげたときの横(cm)
 const BOOK_H = 15;     // 手帳をひろげたときの縦(cm)
 const MARGIN = 0.5;    // 角からシールまでのすき間(cm)
+const FILL = 0.8;      // 見開きに対する場面の大きさ(1 = 手帳いっぱい)
 // マーク(左ページの左下)から見た、見開きの真ん中の位置(マークの大きさ=1)
-const OFFSET_X = (BOOK_W / 2 - (MARGIN + MARK_CM / 2)) / MARK_CM;
-const OFFSET_Y = (BOOK_H / 2 - (MARGIN + MARK_CM / 2)) / MARK_CM;
-// 場面の横はば(2.7)を、見開きの横はばに合わせる
-const SCALE_BOOK = (BOOK_W / MARK_CM) / 2.7;
+let OFFSET_X, OFFSET_Y, SCALE_BOOK;
+function calcBook() {
+  OFFSET_X = (BOOK_W / 2 - (MARGIN + MARK_CM / 2)) / MARK_CM;
+  OFFSET_Y = (BOOK_H / 2 - (MARGIN + MARK_CM / 2)) / MARK_CM;
+  // 場面の横はば(2.7)を、見開きの横はばに合わせる
+  SCALE_BOOK = (BOOK_W / MARK_CM) / 2.7 * FILL;
+}
+// マークの大きさボタン
+const SIZES = [4.5, 3.5, 3, 2.5];
+try { const v = parseFloat(localStorage.getItem('markCm')); if (SIZES.includes(v)) MARK_CM = v; } catch (e) {}
+function drawSizeBtns() {
+  const box = document.getElementById('sizeBtns'); box.innerHTML = '';
+  SIZES.forEach(v => {
+    const b = document.createElement('button'); b.textContent = v + 'cm';
+    b.className = v === MARK_CM ? 'main' : 'sub'; b.style.minWidth = '72px';
+    b.onclick = () => { MARK_CM = v; try { localStorage.setItem('markCm', v); } catch (e) {} drawSizeBtns(); };
+    box.appendChild(b);
+  });
+}
+drawSizeBtns();
 let current = -1;
 
 function showWaiting() {
@@ -338,38 +357,94 @@ function holdScene(i) {
   stage.setAttribute('scale', `${k} ${k} ${k}`);
   stageScene = makeScene(stage, i, false);
 }
+// ===== スマホの傾きセンサー(マークが外れても、場面をその場に残す) =====
+const devQ = new THREE.Quaternion(); let hasGyro = false;
+(function () {
+  const zee = new THREE.Vector3(0, 0, 1), eu = new THREE.Euler(), tmp = new THREE.Quaternion();
+  const q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+  const d = THREE.MathUtils.degToRad;
+  window.addEventListener('deviceorientation', (e) => {
+    if (e.alpha == null) return;
+    hasGyro = true;
+    const ang = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+    eu.set(d(e.beta), d(e.alpha), -d(e.gamma), 'YXZ');
+    devQ.setFromEuler(eu).multiply(q1).multiply(tmp.setFromAxisAngle(zee, -d(ang)));
+  });
+})();
+function askGyroPermission() {
+  try {
+    if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().catch(() => {});
+    }
+  } catch (e) {}
+}
+const lastQ = [];        // マークを最後に見たときの、スマホの向き
+let gStage = null, gScene = null, gIdx = -1;
+function clearGyroHold() {
+  if (gScene) { gStage.removeChild(gScene); gScene = null; } gIdx = -1;
+}
+function holdWithGyro(i) {
+  clearGyroHold();
+  const h = add(gStage, 'a-entity', { position: `${OFFSET_X.toFixed(3)} ${OFFSET_Y.toFixed(3)} 0`, rotation: '80 0 0' });
+  makeScene(h, i, false, SCALE_BOOK);
+  gScene = h; gIdx = i;
+}
+const relQ = new THREE.Quaternion(), relM = new THREE.Matrix4();
+function gyroTick() {
+  if (gScene && gIdx >= 0 && lastPose[gIdx] && lastQ[gIdx]) {
+    // 見えている向き = (今の向き)の逆 × (マークを見たときの向き)
+    relQ.copy(devQ).invert().multiply(lastQ[gIdx]);
+    relM.makeRotationFromQuaternion(relQ).multiply(lastPose[gIdx]);
+    gStage.object3D.matrix.copy(relM);
+    gStage.object3D.matrixWorldNeedsUpdate = true;
+  }
+  requestAnimationFrame(gyroTick);
+}
+
 function setupTargets() {
   stage = add(sceneEl, 'a-entity', {});
+  gStage = add(sceneEl, 'a-entity', {});
+  gStage.object3D.matrixAutoUpdate = false;
+  gyroTick();
   SCENES.forEach((s, i) => {
     const anchor = add(sceneEl, 'a-entity', { 'mindar-image-target': `targetIndex: ${i}` });
     // 見開きの真ん中に置いて、ページから立ち上がるように向きを変える(飛び出す絵本)
     const holder = add(anchor, 'a-entity', { position: `${OFFSET_X.toFixed(3)} ${OFFSET_Y.toFixed(3)} 0`, rotation: '80 0 0' });
     let g = null;
     anchor.addEventListener('targetFound', () => {
-      const same = (current === i && stageScene);
-      clearStage();
+      const same = (current === i && (stageScene || gScene));
+      clearStage(); clearGyroHold();
       if (g) holder.removeChild(g);
       g = makeScene(holder, i, !same, SCALE_BOOK);
       showInfo(i);
     });
     anchor.addEventListener('targetLost', () => {
       if (g) { holder.removeChild(g); g = null; }
-      if (current === i) holdScene(i);   // 消さずに、画面に残す
+      if (current === i) {
+        if (hasGyro && lastQ[i]) holdWithGyro(i);   // 傾きセンサーで、その場に残す
+        else holdScene(i);                           // センサーがないときは、画面の真ん中に残す
+      }
     });
     lastPose[i] = null;
     (function track() {
-      if (anchor.object3D.visible) (lastPose[i] = lastPose[i] || new THREE.Matrix4()).copy(anchor.object3D.matrix);
+      const m = anchor.object3D.matrix;
+      if (anchor.object3D.visible && !(lastPose[i] && lastPose[i].equals(m))) {
+        (lastPose[i] = lastPose[i] || new THREE.Matrix4()).copy(m);
+        (lastQ[i] = lastQ[i] || new THREE.Quaternion()).copy(devQ);
+      }
       requestAnimationFrame(track);
     })();
   });
 }
-document.getElementById('closeBtn').onclick = () => { clearStage(); showWaiting(); };
+document.getElementById('closeBtn').onclick = () => { clearStage(); clearGyroHold(); showWaiting(); };
 
 document.getElementById('startBtn').onclick = async () => {
+  askGyroPermission();   // iPhoneでは、ここで「動きと方向」の許可を聞かれます
   try { await document.fonts.ready; } catch (e) {}
   document.getElementById('start').style.display = 'none';
   document.getElementById('panel').style.display = 'block';
   showWaiting();
+  calcBook();
   const go = () => { setupTargets(); sceneEl.systems['mindar-image-system'].start(); };
   if (sceneEl.hasLoaded) go(); else sceneEl.addEventListener('loaded', go);
 };
