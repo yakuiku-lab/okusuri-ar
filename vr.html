@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>飛び出すお薬手帳VR(試作1号)</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@500;700;900&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/aframe@1.6.0/dist/aframe-v1.6.0.min.js"></script>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;font-family:"Hiragino Sans","Noto Sans JP",sans-serif;background:#dff3f6;}
+  #panel{position:fixed;left:10px;right:10px;bottom:10px;z-index:10;background:rgba(255,255,255,.96);
+    border-radius:18px;padding:14px 16px 12px;box-shadow:0 4px 18px rgba(0,0,0,.18);max-width:720px;margin:0 auto;}
+  #step{font-size:15px;color:#1f8a86;font-weight:700;margin-bottom:2px;}
+  #title{font-size:22px;font-weight:900;color:#17413f;margin:0 0 6px;line-height:1.3;}
+  #text{font-size:18px;line-height:1.6;color:#222;margin:0 0 10px;}
+  .btns{display:flex;gap:8px;flex-wrap:wrap;}
+  button{font:inherit;font-size:19px;font-weight:700;border:none;border-radius:14px;padding:12px 16px;min-height:52px;cursor:pointer;}
+  .main{background:#1f8a86;color:#fff;flex:1 1 140px;}
+  .sub{background:#e6f2f1;color:#17413f;flex:1 1 100px;}
+  button:disabled{opacity:.35;}
+  #hint{position:fixed;top:10px;left:10px;right:10px;z-index:10;text-align:center;font-size:15px;color:#17413f;
+    background:rgba(255,255,255,.8);border-radius:12px;padding:6px 10px;max-width:520px;margin:0 auto;}
+  a-scene{position:fixed!important;top:0;left:0;width:100%;height:60%;}
+  .a-enter-vr,.a-enter-ar,.a-orientation-modal{display:none!important;}
+  #note{font-size:12px;color:#666;margin-top:8px;}
+  #start{position:fixed;inset:0;z-index:20;background:linear-gradient(#e9f8f7,#cfeeea);display:flex;
+    flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;}
+  #start h1{font-size:30px;color:#17413f;margin:0 0 10px;line-height:1.35;}
+  #start p{font-size:19px;color:#333;line-height:1.7;margin:0 0 22px;}
+  #start button{font-size:24px;padding:16px 40px;}
+</style>
+</head>
+<body>
+
+<div id="start">
+  <h1>飛び出す<br>お薬手帳 VR</h1>
+  <p>お薬手帳が「どんな時に役立つのか」を<br>立体で見て学べます。</p>
+  <button class="main" id="startBtn">はじめる</button>
+</div>
+
+<div id="hint">👆 画面を指でなぞると、まわりを見わたせます</div>
+
+<div id="panel">
+  <div id="step"></div>
+  <h2 id="title"></h2>
+  <p id="text"></p>
+  <div class="btns" id="btns"></div>
+  <div id="note">※この教材は一般的な説明です。くわしくは、かかりつけの薬剤師にご相談ください。</div>
+</div>
+
+<a-scene id="scene" embedded vr-mode-ui="enabled:false" loading-screen="enabled:false"
+  device-orientation-permission-ui="enabled:false"
+  renderer="antialias:true; colorManagement:true"
+  cursor="rayOrigin: mouse" raycaster="objects: .clickable">
+  <a-sky color="#dff3f6"></a-sky>
+  <a-circle radius="10" rotation="-90 0 0" color="#b9dcb4"></a-circle>
+  <a-entity light="type: ambient; intensity: 0.75"></a-entity>
+  <a-entity light="type: directional; intensity: 0.7" position="1 3 2"></a-entity>
+  <a-entity id="cam" camera position="0 1.6 -0.1"
+    look-controls="touchEnabled:true; magicWindowTrackingEnabled:false"></a-entity>
+</a-scene>
+
+<script>
+// ===== 内容(ここを書きかえると、説明文を変えられます) =====
+const SCENES = [
+  { title: '普段の病院・薬局で',
+    text: 'いくつかの病院や薬局にかかっていても、お薬手帳を見せれば、飲み合わせ(薬どうしの相性)に問題がないか、薬剤師がしっかり確認できます。毎日の薬を安心して飲めます。',
+    build: buildDaily },
+  { title: '副作用・アレルギーの記録',
+    text: '以前に起きた副作用やアレルギーを書いておくと、同じ薬で同じつらい思いをくり返さないために役立ちます。',
+    build: buildAllergy },
+  { title: '救急車で運ばれたとき',
+    text: '急に倒れて自分で話せないときも、お薬手帳があれば、飲んでいる薬が救急隊や医師に伝わり、すばやい手当てにつながります。',
+    build: buildEmergency },
+  { title: '旅先で薬を忘れたとき',
+    text: '旅行先で薬を忘れても、お薬手帳があれば、はじめての病院でも、いつもの薬の情報を伝えられます。必要な薬を受け取りやすくなります。',
+    build: buildTravel },
+  { title: '連休で受診を忘れていたとき',
+    text: '連休が続いて、いつもの病院に行きそびれ、薬が切れてしまった…。そんなときも、お薬手帳があれば、急に別のクリニックを受診しても、今の薬を正しく伝えられます。',
+    build: buildHoliday },
+  { title: '災害のとき',
+    text: '災害で薬を持ち出せなくても、お薬手帳があれば、自分の飲んでいる薬を伝えて、必要な薬をお願いすることができます。',
+    build: buildDisaster },
+  { title: 'みんなで持とう お薬手帳',
+    text: 'お薬手帳は、あなたの薬の「名刺」です。1冊にまとめて、いつも持ち歩きましょう。スマホで使える「電子お薬手帳」もあります。',
+    build: buildSummary }
+];
+
+const FONT = '"Hiragino Sans","Noto Sans JP",sans-serif';
+const sceneEl = document.getElementById('scene');
+let isOpen = false, idx = 0, popGroup = null;
+
+// ===== 便利な関数 =====
+function add(parent, tag, attrs) {
+  const el = document.createElement(tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  parent.appendChild(el);
+  return el;
+}
+function roundRect(x, X, Y, w, h, r) {
+  x.beginPath(); x.moveTo(X + r, Y); x.arcTo(X + w, Y, X + w, Y + h, r); x.arcTo(X + w, Y + h, X, Y + h, r);
+  x.arcTo(X, Y + h, X, Y, r); x.arcTo(X, Y, X + w, Y, r); x.closePath();
+}
+function canvasURL(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h); return 'url(' + c.toDataURL('image/png') + ')';
+}
+// 文字の看板(日本語を3Dの中に出す)
+function sign(parent, text, pos, opt = {}) {
+  const size = 64, pad = 44;
+  const m = document.createElement('canvas').getContext('2d');
+  m.font = `900 ${size}px ${FONT}`;
+  const w = Math.ceil(m.measureText(text).width) + pad * 2, h = size + 56;
+  const url = canvasURL(w, h, (x) => {
+    roundRect(x, 4, 4, w - 8, h - 8, 36); x.fillStyle = opt.bg || '#ffffff'; x.fill();
+    x.lineWidth = 6; x.strokeStyle = opt.border || '#1f8a86'; x.stroke();
+    x.font = `900 ${size}px ${FONT}`; x.fillStyle = opt.fg || '#17413f';
+    x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(text, w / 2, h / 2 + 4);
+  });
+  const ph = opt.height || 0.22;
+  return add(parent, 'a-plane', { position: pos, width: ph * w / h, height: ph,
+    material: `shader:flat; transparent:true; side:double; src:${url}` });
+}
+function island(g, pos) {
+  const e = add(g, 'a-entity', { position: pos });
+  add(e, 'a-cylinder', { radius: 0.55, height: 0.06, color: '#bfe5c0', position: '0 -0.03 0' });
+  return e;
+}
+function person(p, pos, color) {
+  const e = add(p, 'a-entity', { position: pos });
+  add(e, 'a-cylinder', { radius: 0.11, height: 0.34, color: color || '#5b8bd9', position: '0 0.17 0' });
+  add(e, 'a-sphere', { radius: 0.1, color: '#f6d3b3', position: '0 0.45 0' });
+  return e;
+}
+function redCross(p, pos, s) {
+  const e = add(p, 'a-entity', { position: pos });
+  add(e, 'a-box', { width: s, height: s * 0.3, depth: 0.01, color: '#e53935' });
+  add(e, 'a-box', { width: s * 0.3, height: s, depth: 0.01, color: '#e53935' });
+  return e;
+}
+function hospital(p, pos, name, crossColor) {
+  const e = add(p, 'a-entity', { position: pos });
+  add(e, 'a-box', { width: 0.6, height: 0.7, depth: 0.42, color: '#ffffff', position: '0 0.35 0' });
+  for (let r = 0; r < 2; r++) for (let c = 0; c < 3; c++)
+    add(e, 'a-box', { width: 0.11, height: 0.1, depth: 0.01, color: '#9fd3e6', position: `${-0.18 + c * 0.18} ${0.25 + r * 0.17} 0.215` });
+  const rc = redCross(e, '0 0.6 0.215', 0.12);
+  if (crossColor) rc.querySelectorAll('a-box').forEach(b => b.setAttribute('color', crossColor));
+  sign(e, name, '0 0.85 0', { height: 0.16 });
+  return e;
+}
+
+// ===== 各場面の立体 =====
+function buildDaily(g) {
+  hospital(island(g, '-0.95 0 0'), '0 0 0', 'いつもの病院');
+  hospital(island(g, '0.95 0 0'), '0 0 0', 'かかりつけ薬局', '#2e9e5b');
+  sign(g, '✔ 飲み合わせ チェックOK', '0 0.72 -0.1', { height: 0.17, bg: '#e6f7ec', border: '#2e9e5b', fg: '#1d6b3c' });
+}
+function buildTravel(g) {
+  const L = island(g, '-0.95 0 0');
+  add(L, 'a-box', { width: 0.36, height: 0.46, depth: 0.16, color: '#e07a5f', position: '-0.1 0.25 0' });
+  add(L, 'a-torus', { radius: 0.07, 'radius-tubular': 0.015, arc: 180, color: '#555', position: '-0.1 0.48 0' });
+  person(L, '0.25 0 0.1', '#3fa07a');
+  sign(L, '薬を忘れた!', '0 0.85 0', { height: 0.15, bg: '#fff4e5', border: '#f08a24' });
+  hospital(island(g, '0.95 0 0'), '0 0 0', '旅先の病院');
+}
+function buildHoliday(g) {
+  const L = island(g, '-0.95 0 0');
+  const url = canvasURL(420, 400, (x, w, h) => {
+    x.fillStyle = '#ffffff'; x.fillRect(0, 0, w, h);
+    x.fillStyle = '#e53935'; x.fillRect(0, 0, w, 70);
+    x.fillStyle = '#fff'; x.font = `900 44px ${FONT}`; x.textAlign = 'center'; x.fillText('連休', w / 2, 52);
+    x.font = `700 30px ${FONT}`;
+    for (let i = 0; i < 21; i++) {
+      const c = i % 7, r = Math.floor(i / 7), d = i + 1;
+      const hol = d >= 3 && d <= 7;
+      if (hol) { x.fillStyle = '#ffe1e1'; x.fillRect(12 + c * 57, 92 + r * 100, 52, 86); }
+      x.fillStyle = hol ? '#e53935' : '#333'; x.fillText(String(d), 38 + c * 57, 150 + r * 100);
+    }
+  });
+  add(L, 'a-plane', { width: 0.55, height: 0.52, position: '-0.05 0.3 0', material: `shader:flat; side:double; src:${url}` });
+  person(L, '0.33 0 0.15', '#c46fb0');
+  sign(L, '受診を忘れてた!', '0 0.8 0', { height: 0.15, bg: '#fff4e5', border: '#f08a24' });
+  hospital(island(g, '0.95 0 0'), '0 0 0', 'べつのクリニック');
+}
+function buildDisaster(g) {
+  const L = island(g, '-0.95 0 0');
+  add(L, 'a-cone', { 'radius-bottom': 0.4, 'radius-top': 0.01, height: 0.55, 'segments-radial': 4, color: '#f08a24', position: '0 0.27 0', rotation: '0 45 0' });
+  person(L, '0.3 0 0.25', '#7a6fd1');
+  sign(L, '避難所', '0 0.75 0', { height: 0.15 });
+  sign(g, '飲んでいる薬を伝えられる', '0 0.72 -0.1', { height: 0.16 });
+  const R = island(g, '0.95 0 0');
+  const h = add(R, 'a-entity', { rotation: '0 0 12' });
+  add(h, 'a-box', { width: 0.5, height: 0.38, depth: 0.45, color: '#c9a27e', position: '0 0.19 0' });
+  add(h, 'a-cone', { 'radius-bottom': 0.4, 'radius-top': 0.01, height: 0.3, 'segments-radial': 4, color: '#8d5a3b', position: '0 0.53 0', rotation: '0 45 0' });
+  sign(R, '薬を持ち出せない…', '0 0.95 0', { height: 0.14, bg: '#fff4e5', border: '#f08a24' });
+}
+function buildEmergency(g) {
+  const R = island(g, '0.95 0 0');
+  const a = add(R, 'a-entity', { rotation: '0 -25 0' });
+  add(a, 'a-box', { width: 0.85, height: 0.42, depth: 0.42, color: '#ffffff', position: '-0.05 0.29 0' });
+  add(a, 'a-box', { width: 0.25, height: 0.3, depth: 0.42, color: '#f2f2f2', position: '0.5 0.23 0' });
+  add(a, 'a-box', { width: 0.12, height: 0.06, depth: 0.12, color: '#e53935', position: '0 0.53 0',
+    animation: 'property: material.color; from:#e53935; to:#ffb3b3; dur:400; dir:alternate; loop:true' });
+  redCross(a, '-0.05 0.3 0.215', 0.18);
+  for (const x of [-0.3, 0.4]) for (const z of [0.2, -0.2])
+    add(a, 'a-cylinder', { radius: 0.08, height: 0.05, color: '#333', rotation: '90 0 0', position: `${x} 0.08 ${z}` });
+  sign(R, '救急車', '0 0.8 0', { height: 0.15 });
+  const L = island(g, '-0.95 0 0');
+  const p = person(L, '0 0 0', '#d9705b');
+  p.setAttribute('rotation', '0 0 80'); p.setAttribute('position', '0.15 0.1 0');
+  sign(L, '自分で話せない…', '0 0.7 0', { height: 0.14, bg: '#fff4e5', border: '#f08a24' });
+  sign(g, '飲んでいる薬が伝わる', '0 0.72 -0.1', { height: 0.16 });
+}
+function buildAllergy(g) {
+  const L = island(g, '-0.95 0 0');
+  const c = capsule(L, '#f2c94c', '#ffffff', 2.2); c.setAttribute('position', '0 0.45 0'); c.setAttribute('rotation', '0 0 60');
+  sign(L, '✕', '0.25 0.75 0.2', { height: 0.25, bg: '#ffe5e5', border: '#e53935', fg: '#e53935' });
+  const R = island(g, '0.95 0 0');
+  const url = canvasURL(400, 520, (x, w, h) => {
+    x.fillStyle = '#fffdf5'; x.fillRect(0, 0, w, h); x.fillStyle = '#1f8a86'; x.fillRect(0, 0, w, 80);
+    x.fillStyle = '#fff'; x.font = `900 40px ${FONT}`; x.textAlign = 'center'; x.fillText('記録メモ', w / 2, 55);
+    x.fillStyle = '#17413f'; x.font = `700 34px ${FONT}`; x.textAlign = 'left';
+    ['副作用:', '  ○○薬で発疹', 'アレルギー:', '  卵・花粉'].forEach((t, i) => x.fillText(t, 28, 150 + i * 70));
+    x.strokeStyle = '#cde'; for (let i = 0; i < 6; i++) { x.beginPath(); x.moveTo(20, 165 + i * 70); x.lineTo(w - 20, 165 + i * 70); x.stroke(); }
+  });
+  add(R, 'a-plane', { width: 0.5, height: 0.65, position: '0 0.4 0', material: `shader:flat; side:double; src:${url}` });
+  sign(g, '同じつらさをくり返さない', '0 0.72 -0.1', { height: 0.16 });
+}
+function buildSummary(g) {
+  const L = island(g, '-0.95 0 0');
+  add(L, 'a-box', { width: 0.34, height: 0.62, depth: 0.04, color: '#222', position: '0 0.4 0' });
+  const url = canvasURL(300, 540, (x, w, h) => {
+    x.fillStyle = '#e9f8f7'; x.fillRect(0, 0, w, h); x.fillStyle = '#1f8a86'; x.fillRect(0, 0, w, 90);
+    x.fillStyle = '#fff'; x.font = `900 34px ${FONT}`; x.textAlign = 'center'; x.fillText('電子', w / 2, 40); x.fillText('お薬手帳', w / 2, 80);
+    x.fillStyle = '#17413f'; x.font = `700 26px ${FONT}`;
+    ['いつもの薬', '──────', '飲み方', '──────', '記録'].forEach((t, i) => x.fillText(t, w / 2, 160 + i * 60));
+  });
+  add(L, 'a-plane', { width: 0.3, height: 0.56, position: '0 0.4 0.021', material: `shader:flat; src:${url}` });
+  sign(L, 'スマホ版も', '0 0.85 0', { height: 0.15 });
+  const R = island(g, '0.95 0 0');
+  add(R, 'a-box', { width: 0.5, height: 0.36, depth: 0.2, color: '#8e6bbf', position: '0 0.18 0' });
+  add(R, 'a-torus', { radius: 0.13, 'radius-tubular': 0.02, arc: 180, color: '#5e4585', position: '0 0.36 0' });
+  sign(R, 'いつも持ち歩く', '0 0.75 0', { height: 0.15 });
+  sign(g, 'みんなで持とう お薬手帳!', '0 0.72 -0.1', { height: 0.2, bg: '#1f8a86', border: '#17413f', fg: '#ffffff' });
+}
+
+// ===== 薬の立体 =====
+function capsule(p, c1, c2, s = 1) {
+  const e = add(p, 'a-entity', { scale: `${s} ${s} ${s}` });
+  add(e, 'a-cylinder', { radius: 0.055, height: 0.1, color: c1, position: '0 0.05 0' });
+  add(e, 'a-sphere', { radius: 0.055, color: c1, position: '0 0.1 0' });
+  add(e, 'a-cylinder', { radius: 0.055, height: 0.1, color: c2, position: '0 -0.05 0' });
+  add(e, 'a-sphere', { radius: 0.055, color: c2, position: '0 -0.1 0' });
+  return e;
+}
+function tablet(p, color) {
+  const e = add(p, 'a-entity', {});
+  add(e, 'a-cylinder', { radius: 0.09, height: 0.04, color, rotation: '90 0 0' });
+  add(e, 'a-box', { width: 0.12, height: 0.008, depth: 0.005, color: '#ddd', position: '0 0 0.021' });
+  return e;
+}
+const PILL_COLORS = [['#e74c3c', '#ffffff'], ['#3498db', '#f1c40f'], ['#2ecc71', '#ffffff'], ['#9b59b6', '#ecf0f1']];
+function spawnPills(g) {
+  const n = 8;
+  for (let i = 0; i < n; i++) {
+    const pill = (i % 2 === 0) ? capsule(g, ...PILL_COLORS[(i / 2) % 4]) : tablet(g, i % 3 ? '#ffffff' : '#ffe0b2');
+    const ang = (i / n) * Math.PI * 2 + Math.PI / 8;
+    const tx = (Math.cos(ang) * 0.75).toFixed(2), ty = (0.2 + Math.sin(ang) * 0.35).toFixed(2), tz = (0.35 + (i % 3) * 0.12).toFixed(2);
+    const to = `${tx} ${ty} ${tz}`, up = `${tx} ${(+ty + 0.07).toFixed(2)} ${tz}`;
+    pill.setAttribute('position', '0 0 0');
+    pill.setAttribute('animation__out', { property: 'position', from: '0 0 0', to, dur: 900, delay: 250 + i * 70, easing: 'easeOutBack' });
+    pill.setAttribute('animation__bob', { property: 'position', from: to, to: up, dur: 1300, delay: 1250 + i * 70, dir: 'alternate', loop: true, easing: 'easeInOutSine' });
+    pill.setAttribute('animation__spin', { property: 'rotation', from: `0 0 ${i * 40}`, to: `0 360 ${i * 40}`, dur: 5000 + i * 300, loop: true, easing: 'linear' });
+  }
+}
+
+// ===== お薬手帳(本)の立体 =====
+let pivot;
+function buildBook() {
+  const book = add(sceneEl, 'a-entity', { id: 'book', position: '0 1.25 -2.0' });
+  add(book, 'a-box', { width: 0.9, height: 1.2, depth: 0.04, color: '#1f8a86', position: '0 0 -0.05', class: 'clickable' });
+  add(book, 'a-box', { width: 0.85, height: 1.15, depth: 0.07, color: '#fffdf5', position: '0.02 0 0' });
+  const inner = canvasURL(420, 560, (x, w, h) => {
+    x.fillStyle = '#fffdf5'; x.fillRect(0, 0, w, h);
+    x.fillStyle = '#1f8a86'; x.font = `900 38px ${FONT}`; x.fillText('調剤日 ○月○日', 30, 70);
+    x.fillStyle = '#333'; x.font = `700 28px ${FONT}`;
+    ['○○錠 1日2回 朝夕', '△△カプセル 1日1回', '□□薬局 薬剤師'].forEach((t, i) => x.fillText(t, 30, 140 + i * 60));
+    x.strokeStyle = '#cfe3e2'; x.lineWidth = 2;
+    for (let i = 0; i < 8; i++) { x.beginPath(); x.moveTo(24, 160 + i * 60); x.lineTo(w - 24, 160 + i * 60); x.stroke(); }
+  });
+  add(book, 'a-plane', { width: 0.8, height: 1.08, position: '0.02 0 0.036', material: `shader:flat; src:${inner}` });
+  pivot = add(book, 'a-entity', { position: '-0.45 0 0.05' });
+  add(pivot, 'a-box', { width: 0.9, height: 1.2, depth: 0.03, color: '#1f8a86', position: '0.45 0 0', class: 'clickable' });
+  const cover = canvasURL(450, 600, (x, w, h) => {
+    x.fillStyle = '#1f8a86'; x.fillRect(0, 0, w, h);
+    roundRect(x, 30, 30, w - 60, h - 60, 30); x.strokeStyle = '#ffffff'; x.lineWidth = 6; x.stroke();
+    x.fillStyle = '#fff'; x.textAlign = 'center'; x.font = `900 66px ${FONT}`;
+    x.fillText('おくすり', w / 2, 170); x.fillText('手帳', w / 2, 250);
+    // 薬のイラスト
+    x.save(); x.translate(w / 2, 365); x.rotate(-0.5);
+    roundRect(x, -80, -30, 160, 60, 30); x.fillStyle = '#fff'; x.fill();
+    x.fillStyle = '#e74c3c'; x.beginPath(); x.moveTo(0, -30); x.arcTo(-80, -30, -80, 0, 30); x.arcTo(-80, 30, 0, 30, 30); x.lineTo(0, 30); x.fill();
+    x.restore();
+    x.font = `700 34px ${FONT}`; x.fillStyle = '#fff6c2'; x.fillText('👆 タップしてひらく', w / 2, 500);
+  });
+  add(pivot, 'a-plane', { width: 0.86, height: 1.16, position: '0.45 0 0.016', class: 'clickable', material: `shader:flat; src:${cover}` });
+  book.setAttribute('animation__float', { property: 'position', from: '0 1.25 -2.0', to: '0 1.3 -2.0', dur: 1800, dir: 'alternate', loop: true, easing: 'easeInOutSine' });
+  book.addEventListener('click', () => { if (!isOpen) openBook(); });
+}
+
+// ===== 動き =====
+function openBook() {
+  isOpen = true; idx = 0;
+  const book = document.getElementById('book');
+  book.removeAttribute('animation__float');
+  book.setAttribute('animation__mv', { property: 'position', to: '0 0.75 -2.0', dur: 900, easing: 'easeInOutCubic' });
+  book.setAttribute('animation__sc', { property: 'scale', to: '0.6 0.6 0.6', dur: 900, easing: 'easeInOutCubic' });
+  pivot.setAttribute('animation__open', { property: 'rotation', to: '0 -160 0', dur: 900, easing: 'easeInOutCubic' });
+  setTimeout(() => showScene(0), 600);
+}
+function closeBook() {
+  isOpen = false; stopSpeak();
+  removePop();
+  pivot.setAttribute('animation__open', { property: 'rotation', to: '0 0 0', dur: 900, easing: 'easeInOutCubic' });
+  const book = document.getElementById('book');
+  book.setAttribute('animation__mv', { property: 'position', to: '0 1.25 -2.0', dur: 900, easing: 'easeInOutCubic' });
+  book.setAttribute('animation__sc', { property: 'scale', to: '1 1 1', dur: 900, easing: 'easeInOutCubic' });
+  showIntro();
+}
+function removePop() {
+  if (!popGroup) return;
+  const old = popGroup; popGroup = null;
+  old.setAttribute('animation__pop', { property: 'scale', to: '0.01 0.01 0.01', dur: 350, easing: 'easeInCubic' });
+  setTimeout(() => old.parentNode && old.parentNode.removeChild(old), 380);
+}
+function showScene(i) {
+  stopSpeak(); removePop(); idx = i;
+  const s = SCENES[i];
+  setTimeout(() => {
+    const g = add(sceneEl, 'a-entity', { position: '0 1.2 -2.3', scale: '0.01 0.01 0.01' });
+    s.build(g);
+    sign(g, s.title, '0 1.08 -0.2', { height: 0.26, bg: '#ffffff', border: '#1f8a86' });
+    spawnPills(g);
+    g.setAttribute('animation__pop', { property: 'scale', from: '0.01 0.01 0.01', to: '1 1 1', dur: 1100, easing: 'easeOutElastic', elasticity: 500 });
+    popGroup = g;
+  }, popGroup ? 400 : 0);
+  setPanel(`場面 ${i + 1} / ${SCENES.length}`, s.title, s.text, [
+    { label: 'まえへ', cls: 'sub', disabled: i === 0, on: () => showScene(i - 1) },
+    { label: '🔊 読み上げ', cls: 'sub', on: () => speak(s.title + '。' + s.text) },
+    i < SCENES.length - 1
+      ? { label: 'つぎへ ▶', cls: 'main', on: () => showScene(i + 1) }
+      : { label: '手帳をとじる', cls: 'main', on: closeBook }
+  ]);
+}
+function showIntro() {
+  setPanel('', 'お薬手帳をひらいてみよう', '画面の「お薬手帳」をタップすると、手帳が役に立つ場面が飛び出します。', [
+    { label: '📖 手帳をひらく', cls: 'main', on: () => { if (!isOpen) openBook(); } }
+  ]);
+}
+function fitScene() {
+  const ph = document.getElementById('panel').offsetHeight + 20;
+  sceneEl.style.height = Math.max(200, window.innerHeight - ph) + 'px';
+  window.dispatchEvent(new Event('resize'));
+}
+window.addEventListener('resize', (e) => { if (e.isTrusted) fitScene(); });
+window.addEventListener('orientationchange', () => setTimeout(fitScene, 300));
+function setPanel(step, title, text, buttons) {
+  document.getElementById('step').textContent = step;
+  document.getElementById('title').textContent = title;
+  document.getElementById('text').textContent = text;
+  const box = document.getElementById('btns'); box.innerHTML = '';
+  buttons.forEach(b => {
+    const el = document.createElement('button'); el.textContent = b.label; el.className = b.cls;
+    el.disabled = !!b.disabled; el.onclick = b.on; box.appendChild(el);
+  });
+  requestAnimationFrame(fitScene);
+}
+function speak(t) {
+  try { const u = new SpeechSynthesisUtterance(t); u.lang = 'ja-JP'; u.rate = 0.9; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (e) {}
+}
+function stopSpeak() { try { speechSynthesis.cancel(); } catch (e) {} }
+
+// ===== はじめる =====
+document.getElementById('startBtn').onclick = async () => {
+  try { await document.fonts.ready; } catch (e) {}
+  document.getElementById('start').style.display = 'none';
+  const go = () => { buildBook(); showIntro(); };
+  if (sceneEl.hasLoaded) go(); else sceneEl.addEventListener('loaded', go);
+};
+</script>
+</body>
+</html>
