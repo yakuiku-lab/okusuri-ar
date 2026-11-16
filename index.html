@@ -269,7 +269,17 @@ function spawnPills(g) {
 
 
 // ===== AR(マークを読み取って飛び出す) =====
-const SCALE = 0.6; // マークの大きさに対する場面の大きさ
+const SCALE = 0.6; // 画面に残すときの大きさ(マークの大きさに対して)
+// ===== お薬手帳の大きさ(ここを変えると、別の手帳にも合わせられます) =====
+const MARK_CM = 4.5;   // シールのマークの大きさ(cm)
+const BOOK_W = 20;     // 手帳をひろげたときの横(cm)
+const BOOK_H = 15;     // 手帳をひろげたときの縦(cm)
+const MARGIN = 0.5;    // 角からシールまでのすき間(cm)
+// マーク(左ページの左下)から見た、見開きの真ん中の位置(マークの大きさ=1)
+const OFFSET_X = (BOOK_W / 2 - (MARGIN + MARK_CM / 2)) / MARK_CM;
+const OFFSET_Y = (BOOK_H / 2 - (MARGIN + MARK_CM / 2)) / MARK_CM;
+// 場面の横はば(2.7)を、見開きの横はばに合わせる
+const SCALE_BOOK = (BOOK_W / MARK_CM) / 2.7;
 let current = -1;
 
 function showWaiting() {
@@ -294,14 +304,15 @@ function speak(t) {
 document.getElementById('speakBtn').onclick = () => { if (current >= 0) speak(SCENES[current].title + '。' + SCENES[current].text); };
 
 // 場面をつくる(土台・題名・薬)
-function makeScene(parent, i, pop) {
+function makeScene(parent, i, pop, S) {
+  S = S || SCALE;
   const s = SCENES[i];
-  const g = add(parent, 'a-entity', { scale: pop ? '0.01 0.01 0.01' : `${SCALE} ${SCALE} ${SCALE}` });
+  const g = add(parent, 'a-entity', { scale: pop ? '0.01 0.01 0.01' : `${S} ${S} ${S}` });
   s.build(g);
   sign(g, s.title, '0 1.08 -0.2', { height: 0.26, bg: '#ffffff', border: '#1f8a86' });
-  spawnPills(add(g, 'a-entity', { position: '0 0.3 0.2' }));
-  const from = pop ? '0.01 0.01 0.01' : `${SCALE * 0.8} ${SCALE * 0.8} ${SCALE * 0.8}`;
-  g.setAttribute('animation__pop', { property: 'scale', from, to: `${SCALE} ${SCALE} ${SCALE}`, dur: pop ? 1100 : 500, easing: pop ? 'easeOutElastic' : 'easeOutBack', elasticity: 500 });
+  spawnPills(add(g, 'a-entity', { position: '0 0.35 0.2', scale: '0.6 0.6 0.6' }));
+  const from = pop ? '0.01 0.01 0.01' : `${S * 0.8} ${S * 0.8} ${S * 0.8}`;
+  g.setAttribute('animation__pop', { property: 'scale', from, to: `${S} ${S} ${S}`, dur: pop ? 1100 : 500, easing: pop ? 'easeOutElastic' : 'easeOutBack', elasticity: 500 });
   return g;
 }
 // マークが見えなくなったときに、場面を残しておく場所(カメラの前)
@@ -331,14 +342,14 @@ function setupTargets() {
   stage = add(sceneEl, 'a-entity', {});
   SCENES.forEach((s, i) => {
     const anchor = add(sceneEl, 'a-entity', { 'mindar-image-target': `targetIndex: ${i}` });
-    // マークの面から手前(上)に向かって立ち上がるように、向きを変える
-    const holder = add(anchor, 'a-entity', { rotation: '60 0 0' });
+    // 見開きの真ん中に置いて、ページから立ち上がるように向きを変える(飛び出す絵本)
+    const holder = add(anchor, 'a-entity', { position: `${OFFSET_X.toFixed(3)} ${OFFSET_Y.toFixed(3)} 0`, rotation: '80 0 0' });
     let g = null;
     anchor.addEventListener('targetFound', () => {
       const same = (current === i && stageScene);
       clearStage();
       if (g) holder.removeChild(g);
-      g = makeScene(holder, i, !same);
+      g = makeScene(holder, i, !same, SCALE_BOOK);
       showInfo(i);
     });
     anchor.addEventListener('targetLost', () => {
